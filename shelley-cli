@@ -1,0 +1,236 @@
+#!/bin/bash
+# shelley-cli - Command-line interface for Shelley agent API
+# Usage: shelley-cli <command> [args]
+
+set -e
+
+BASE_URL="http://localhost:9999/api"
+HEADERS=(-H "X-Exedev-Userid: clawdbot" -H "X-Shelley-Request: 1")
+
+usage() {
+  cat <<EOF
+Usage: shelley-cli <command> [options]
+
+Commands:
+  new <prompt> [--cwd <dir>]     Start new conversation with prompt
+  chat <conv_id> <message>       Send message to existing conversation
+  status <conv_id>               Check if agent is still working
+  get <conv_id>                  Get conversation details
+  result <conv_id>               Get final text response
+  stream <conv_id>               Stream conversation updates
+  cancel <conv_id>               Cancel running conversation
+  list [--limit N]               List recent conversations
+  run <prompt> [--cwd <dir>]     Run prompt and wait for result (blocking)
+  
+Options:
+  --cwd <dir>      Working directory (default: /home/exedev)
+  --limit N        Number of conversations to list (default: 10)
+  --timeout N      Timeout in seconds for 'run' command (default: 300)
+
+Examples:
+  shelley-cli new "Create a Python hello world script"
+  shelley-cli run "What files are in the current directory?" --cwd /tmp
+  shelley-cli status cXXXXXXX
+  shelley-cli result cXXXXXXX
+EOF
+  exit 1
+}
+
+# Create new conversation
+cmd_new() {
+  local prompt="$1"
+  local cwd="/home/exedev"
+  shift
+  
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --cwd) cwd="$2"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  
+  if [[ -z "$prompt" ]]; then
+    echo "Error: prompt required" >&2
+    exit 1
+  fi
+  
+  curl -s -X POST "${HEADERS[@]}" \
+    -H "Content-Type: application/json" \
+    "$BASE_URL/conversations/new" \
+    -d "$(jq -n --arg msg "$prompt" --arg cwd "$cwd" '{message: $msg, cwd: $cwd}')"
+}
+
+# Send message to existing conversation
+cmd_chat() {
+  local conv_id="$1"
+  local message="$2"
+  
+  if [[ -z "$conv_id" || -z "$message" ]]; then
+    echo "Error: conversation_id and message required" >&2
+    exit 1
+  fi
+  
+  curl -s -X POST "${HEADERS[@]}" \
+    -H "Content-Type: application/json" \
+    "$BASE_URL/conversation/$conv_id/chat" \
+    -d "$(jq -n --arg msg "$message" '{message: $msg}')"
+}
+
+# Check agent status
+cmd_status() {
+  local conv_id="$1"
+  
+  if [[ -z "$conv_id" ]]; then
+    echo "Error: conversation_id required" >&2
+    exit 1
+  fi
+  
+  local working=$(curl -s "${HEADERS[@]}" "$BASE_URL/conversation/$conv_id" | jq '.agent_working')
+  
+  if [[ "$working" == "true" ]]; then
+    echo "working"
+  else
+    echo "done"
+  fi
+}
+
+# Get conversation details
+cmd_get() {
+  local conv_id="$1"
+  
+  if [[ -z "$conv_id" ]]; then
+    echo "Error: conversation_id required" >&2
+    exit 1
+  fi
+  
+  curl -s "${HEADERS[@]}" "$BASE_URL/conversation/$conv_id" | jq '{
+    conversation_id: .conversation.conversation_id,
+    slug: .conversation.slug,
+    agent_working: .agent_working,
+    created_at: .conversation.created_at,
+    message_count: (.messages | length)
+  }'
+}
+
+# Get final text result
+cmd_result() {
+  local conv_id="$1"
+  
+  if [[ -z "$conv_id" ]]; then
+    echo "Error: conversation_id required" >&2
+    exit 1
+  fi
+  
+  curl -s "${HEADERS[@]}" "$BASE_URL/conversation/$conv_id" | \
+    jq -r '.messages | map(select(.type=="agent")) | last | .llm_data | fromjson | .Content[] | select(.Type==2) | .Text // empty'
+}
+
+# Stream conversation
+cmd_stream() {
+  local conv_id="$1"
+  
+  if [[ -z "$conv_id" ]]; then
+    echo "Error: conversation_id required" >&2
+    exit 1
+  fi
+  
+  curl -s "${HEADERS[@]}" "$BASE_URL/conversation/$conv_id/stream"
+}
+
+# Cancel conversation
+cmd_cancel() {
+  local conv_id="$1"
+  
+  if [[ -z "$conv_id" ]]; then
+    echo "Error: conversation_id required" >&2
+    exit 1
+  fi
+  
+  curl -s -X POST "${HEADERS[@]}" "$BASE_URL/conversation/$conv_id/cancel"
+}
+
+# List conversations
+cmd_list() {
+  local limit=10
+  
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --limit) limit="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  
+  curl -s "${HEADERS[@]}" "$BASE_URL/conversations" | jq ".[:$limit] | .[] | {id: .conversation_id, slug, created: .created_at, working: .agent_working}"
+}
+
+# Run prompt and wait for result (blocking)
+cmd_run() {
+  local prompt="$1"
+  local cwd="/home/exedev"
+  local timeout=300
+  shift || true
+  
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --cwd) cwd="$2"; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  
+  if [[ -z "$prompt" ]]; then
+    echo "Error: prompt required" >&2
+    exit 1
+  fi
+  
+  # Create conversation
+  local response=$(curl -s -X POST "${HEADERS[@]}" \
+    -H "Content-Type: application/json" \
+    "$BASE_URL/conversations/new" \
+    -d "$(jq -n --arg msg "$prompt" --arg cwd "$cwd" '{message: $msg, cwd: $cwd}')")
+  
+  local conv_id=$(echo "$response" | jq -r '.conversation_id')
+  
+  if [[ -z "$conv_id" || "$conv_id" == "null" ]]; then
+    echo "Error: Failed to create conversation" >&2
+    echo "$response" >&2
+    exit 1
+  fi
+  
+  echo "Conversation: $conv_id" >&2
+  echo "URL: https://clawdbot-sthala.exe.xyz:9999/c/$conv_id" >&2
+  
+  # Poll until complete or timeout
+  local elapsed=0
+  local interval=2
+  
+  while [[ $elapsed -lt $timeout ]]; do
+    local status=$(curl -s "${HEADERS[@]}" "$BASE_URL/conversation/$conv_id" | jq '.agent_working')
+    
+    if [[ "$status" == "false" ]]; then
+      # Get result
+      cmd_result "$conv_id"
+      return 0
+    fi
+    
+    sleep $interval
+    elapsed=$((elapsed + interval))
+  done
+  
+  echo "Error: Timeout after ${timeout}s" >&2
+  exit 1
+}
+
+# Main
+case "${1:-}" in
+  new)    shift; cmd_new "$@" ;;
+  chat)   shift; cmd_chat "$@" ;;
+  status) shift; cmd_status "$@" ;;
+  get)    shift; cmd_get "$@" ;;
+  result) shift; cmd_result "$@" ;;
+  stream) shift; cmd_stream "$@" ;;
+  cancel) shift; cmd_cancel "$@" ;;
+  list)   shift; cmd_list "$@" ;;
+  run)    shift; cmd_run "$@" ;;
+  *)      usage ;;
+esac

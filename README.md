@@ -1,0 +1,55 @@
+# shelley-agent
+
+A Clawdbot skill to interact with Shelley, the coding agent running on exe.dev VMs.
+
+## What is this?
+
+This skill allows Clawdbot to programmatically:
+- Spawn new Shelley chat sessions
+- Send prompts/instructions to Shelley
+- Wait for task completion
+- Retrieve results
+
+All sessions are stored in the VM and visible at https://clawdbot-sthala.exe.xyz:9999/
+
+## Quick Start
+
+```bash
+# Run a simple task
+./shelley-cli run "What is 2+2?"
+
+# Run a task in a specific directory
+./shelley-cli run "List all Python files" --cwd /home/exedev/projects
+
+# Create a conversation (non-blocking)
+./shelley-cli new "Build a REST API" --cwd /home/exedev
+# Returns: {"conversation_id": "cXXXXXXX", "status": "accepted"}
+
+# Check status
+./shelley-cli status cXXXXXXX
+
+# Get result when done
+./shelley-cli result cXXXXXXX
+```
+
+## Use Cases
+
+- **Delegation**: Clawdbot can delegate complex coding tasks to Shelley
+- **Parallel Work**: Start multiple Shelley sessions for different tasks
+- **Automation**: Script interactions with Shelley for CI/CD or scheduled tasks
+- **Audit Trail**: All sessions are logged and viewable in the Shelley UI
+
+## Files
+
+- `SKILL.md` - Full API documentation
+- `shelley-cli` - Command-line tool for interacting with Shelley
+- `README.md` - This file
+
+## Requirements
+
+- Shelley running on port 9999 (default on exe.dev VMs)
+- `curl` and `jq` installed
+
+## License
+
+MIT
