@@ -10,7 +10,7 @@ This skill allows Clawdbot to programmatically:
 - Wait for task completion
 - Retrieve results
 
-All sessions are stored in the VM and visible at https://clawdbot-sthala.exe.xyz:9999/
+All sessions are stored in the VM and visible at `https://<your-vm>.exe.xyz:9999/`
 
 ## Quick Start
 
