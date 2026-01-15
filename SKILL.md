@@ -211,33 +211,78 @@ sqlite3 /home/exedev/.config/shelley/shelley.db \
   "SELECT conversation_id, slug, datetime(created_at, 'localtime') FROM conversations ORDER BY created_at DESC LIMIT 10;"
 ```
 
-## Responding to Clawdbot
+## Clawdbot ↔ Shelley Communication
 
-When Shelley is triggered by Clawdbot, include callback info in the prompt so Shelley can send results back:
+When Clawdbot triggers Shelley, they communicate via a shared response queue.
 
-```bash
-# Include reply-to info in the prompt
-./shelley-cli run "Do the task. When done, reply via: clawdbot message send --provider telegram --to @user --message 'RESULT'" 
+### Request Flow
+
+1. **Clawdbot** creates a request with a unique `request_id`
+2. **Clawdbot** spawns Shelley with the task + `request_id`
+3. **Shelley** completes the task
+4. **Shelley** writes result to the response queue with the `request_id`
+5. **Clawdbot** polls/watches the queue and routes the response to the original requester
+
+### Response Queue
+
+Location: `~/.clawdbot/shelley-responses/`
+
+Each response is a JSON file named `{request_id}.json`:
+
+```json
+{
+  "request_id": "req_abc123",
+  "conversation_id": "cXXXXXXX",
+  "status": "success",
+  "result": "Task completed. Created hello.py with a basic Python script.",
+  "completed_at": "2026-01-15T10:30:00Z"
+}
 ```
 
-Or use the `--callback` option:
+### Invoking Shelley with Request ID
 
 ```bash
-./shelley-cli run "Build the feature" --callback "clawdbot message send --provider whatsapp --to +1234567890"
+# Clawdbot invokes with --request-id
+./shelley-cli run "Build a hello world script" --request-id req_abc123
+
+# Shelley completes task and writes response to:
+# ~/.clawdbot/shelley-responses/req_abc123.json
 ```
 
-Shelley should execute the callback command with the result when the task is complete.
+### Shelley Response Instructions
 
-### Callback Format
+When `--request-id` is provided, Shelley receives these instructions:
 
-The callback is a shell command template. Shelley appends the result as `--message`:
+```
+When you complete this task, write your response to:
+~/.clawdbot/shelley-responses/{request_id}.json
+
+Format:
+{
+  "request_id": "{request_id}",
+  "conversation_id": "<your_conversation_id>",
+  "status": "success" or "error",
+  "result": "<concise summary of what you did or the answer>",
+  "completed_at": "<ISO timestamp>"
+}
+```
+
+### Clawdbot Polling
+
+Clawdbot can poll for responses:
 
 ```bash
-# Clawdbot invokes:
-shelley-cli run "What is 2+2?" --callback "clawdbot message send --provider telegram --to @ks"
+# Check for response
+if [[ -f ~/.clawdbot/shelley-responses/req_abc123.json ]]; then
+  cat ~/.clawdbot/shelley-responses/req_abc123.json
+  rm ~/.clawdbot/shelley-responses/req_abc123.json  # cleanup after processing
+fi
+```
 
-# Shelley completes task, then runs:
-clawdbot message send --provider telegram --to @ks --message "4"
+Or use inotify for real-time:
+
+```bash
+inotifywait -m ~/.clawdbot/shelley-responses/ -e create
 ```
 
 ## Notes

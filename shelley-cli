@@ -21,17 +21,19 @@ Commands:
   cancel <conv_id>               Cancel running conversation
   list [--limit N]               List recent conversations
   run <prompt> [--cwd <dir>]     Run prompt and wait for result (blocking)
+  response <request_id>          Check response queue for a request
+  ack <request_id>               Acknowledge and remove response from queue
   
 Options:
   --cwd <dir>         Working directory (default: /home/exedev)
   --limit N           Number of conversations to list (default: 10)
   --timeout N         Timeout in seconds for 'run' command (default: 300)
-  --callback <cmd>    Command to execute with result (for Clawdbot responses)
+  --request-id <id>   Request ID for Clawdbot response queue
 
 Examples:
   shelley-cli new "Create a Python hello world script"
   shelley-cli run "What files are in the current directory?" --cwd /tmp
-  shelley-cli run "Build feature X" --callback "clawdbot message send --provider telegram --to @user"
+  shelley-cli run "Build feature X" --request-id req_abc123
   shelley-cli status cXXXXXXX
   shelley-cli result cXXXXXXX
 EOF
@@ -165,19 +167,21 @@ cmd_list() {
   curl -s "${HEADERS[@]}" "$BASE_URL/conversations" | jq ".[:$limit] | .[] | {id: .conversation_id, slug, created: .created_at, working: .agent_working}"
 }
 
+RESPONSE_QUEUE_DIR="$HOME/.clawdbot/shelley-responses"
+
 # Run prompt and wait for result (blocking)
 cmd_run() {
   local prompt="$1"
   local cwd="/home/exedev"
   local timeout=300
-  local callback=""
+  local request_id=""
   shift || true
   
   while [[ $# -gt 0 ]]; do
     case $1 in
       --cwd) cwd="$2"; shift 2 ;;
       --timeout) timeout="$2"; shift 2 ;;
-      --callback) callback="$2"; shift 2 ;;
+      --request-id) request_id="$2"; shift 2 ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
   done
@@ -187,16 +191,28 @@ cmd_run() {
     exit 1
   fi
   
-  # If callback provided, append instructions to prompt
+  # If request_id provided, append response queue instructions
   local full_prompt="$prompt"
-  if [[ -n "$callback" ]]; then
+  if [[ -n "$request_id" ]]; then
+    mkdir -p "$RESPONSE_QUEUE_DIR"
     full_prompt="$prompt
 
 ---
-IMPORTANT: When you complete this task, send your final response back using this command:
-$callback --message \"YOUR_RESPONSE_HERE\"
+CLAWDBOT RESPONSE INSTRUCTIONS:
+When you complete this task, write your response to: $RESPONSE_QUEUE_DIR/${request_id}.json
 
-Replace YOUR_RESPONSE_HERE with a concise summary of what you did or the answer."
+Use this exact format:
+\`\`\`json
+{
+  \"request_id\": \"$request_id\",
+  \"conversation_id\": \"<this_conversation_id>\",
+  \"status\": \"success\",
+  \"result\": \"<concise summary of what you accomplished or the answer>\",
+  \"completed_at\": \"<current ISO timestamp>\"
+}
+\`\`\`
+
+This allows Clawdbot to retrieve your response and forward it to the user."
   fi
   
   # Create conversation
@@ -237,16 +253,55 @@ Replace YOUR_RESPONSE_HERE with a concise summary of what you did or the answer.
   exit 1
 }
 
+# Check response queue for a request
+cmd_response() {
+  local request_id="$1"
+  
+  if [[ -z "$request_id" ]]; then
+    echo "Error: request_id required" >&2
+    exit 1
+  fi
+  
+  local response_file="$RESPONSE_QUEUE_DIR/${request_id}.json"
+  
+  if [[ -f "$response_file" ]]; then
+    cat "$response_file"
+  else
+    echo "null"
+  fi
+}
+
+# Clean up a response from the queue
+cmd_ack() {
+  local request_id="$1"
+  
+  if [[ -z "$request_id" ]]; then
+    echo "Error: request_id required" >&2
+    exit 1
+  fi
+  
+  local response_file="$RESPONSE_QUEUE_DIR/${request_id}.json"
+  
+  if [[ -f "$response_file" ]]; then
+    rm "$response_file"
+    echo "ok"
+  else
+    echo "not_found"
+  fi
+}
+
 # Main
 case "${1:-}" in
-  new)    shift; cmd_new "$@" ;;
-  chat)   shift; cmd_chat "$@" ;;
-  status) shift; cmd_status "$@" ;;
-  get)    shift; cmd_get "$@" ;;
-  result) shift; cmd_result "$@" ;;
-  stream) shift; cmd_stream "$@" ;;
-  cancel) shift; cmd_cancel "$@" ;;
-  list)   shift; cmd_list "$@" ;;
-  run)    shift; cmd_run "$@" ;;
-  *)      usage ;;
+  new)      shift; cmd_new "$@" ;;
+  chat)     shift; cmd_chat "$@" ;;
+  status)   shift; cmd_status "$@" ;;
+  get)      shift; cmd_get "$@" ;;
+  result)   shift; cmd_result "$@" ;;
+  stream)   shift; cmd_stream "$@" ;;
+  cancel)   shift; cmd_cancel "$@" ;;
+  list)     shift; cmd_list "$@" ;;
+  run)      shift; cmd_run "$@" ;;
+  response) shift; cmd_response "$@" ;;
+  ack)      shift; cmd_ack "$@" ;;
+  *)        usage ;;
 esac

@@ -21,9 +21,14 @@ All sessions are stored in the VM and visible at `https://<your-vm>.exe.xyz:9999
 # Run a task in a specific directory
 ./shelley-cli run "List all Python files" --cwd /home/exedev/projects
 
-# Run with callback to Clawdbot (Shelley will respond via the callback)
-./shelley-cli run "Build a hello world script" \
-  --callback "clawdbot message send --provider telegram --to @user"
+# Run with request ID (Shelley writes response to queue for Clawdbot)
+./shelley-cli run "Build a hello world script" --request-id req_abc123
+
+# Check response queue
+./shelley-cli response req_abc123
+
+# Acknowledge and remove response
+./shelley-cli ack req_abc123
 
 # Create a conversation (non-blocking)
 ./shelley-cli new "Build a REST API" --cwd /home/exedev
