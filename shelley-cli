@@ -23,13 +23,15 @@ Commands:
   run <prompt> [--cwd <dir>]     Run prompt and wait for result (blocking)
   
 Options:
-  --cwd <dir>      Working directory (default: /home/exedev)
-  --limit N        Number of conversations to list (default: 10)
-  --timeout N      Timeout in seconds for 'run' command (default: 300)
+  --cwd <dir>         Working directory (default: /home/exedev)
+  --limit N           Number of conversations to list (default: 10)
+  --timeout N         Timeout in seconds for 'run' command (default: 300)
+  --callback <cmd>    Command to execute with result (for Clawdbot responses)
 
 Examples:
   shelley-cli new "Create a Python hello world script"
   shelley-cli run "What files are in the current directory?" --cwd /tmp
+  shelley-cli run "Build feature X" --callback "clawdbot message send --provider telegram --to @user"
   shelley-cli status cXXXXXXX
   shelley-cli result cXXXXXXX
 EOF
@@ -168,12 +170,14 @@ cmd_run() {
   local prompt="$1"
   local cwd="/home/exedev"
   local timeout=300
+  local callback=""
   shift || true
   
   while [[ $# -gt 0 ]]; do
     case $1 in
       --cwd) cwd="$2"; shift 2 ;;
       --timeout) timeout="$2"; shift 2 ;;
+      --callback) callback="$2"; shift 2 ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
   done
@@ -183,11 +187,23 @@ cmd_run() {
     exit 1
   fi
   
+  # If callback provided, append instructions to prompt
+  local full_prompt="$prompt"
+  if [[ -n "$callback" ]]; then
+    full_prompt="$prompt
+
+---
+IMPORTANT: When you complete this task, send your final response back using this command:
+$callback --message \"YOUR_RESPONSE_HERE\"
+
+Replace YOUR_RESPONSE_HERE with a concise summary of what you did or the answer."
+  fi
+  
   # Create conversation
   local response=$(curl -s -X POST "${HEADERS[@]}" \
     -H "Content-Type: application/json" \
     "$BASE_URL/conversations/new" \
-    -d "$(jq -n --arg msg "$prompt" --arg cwd "$cwd" '{message: $msg, cwd: $cwd}')")
+    -d "$(jq -n --arg msg "$full_prompt" --arg cwd "$cwd" '{message: $msg, cwd: $cwd}')")
   
   local conv_id=$(echo "$response" | jq -r '.conversation_id')
   
@@ -198,7 +214,6 @@ cmd_run() {
   fi
   
   echo "Conversation: $conv_id" >&2
-  echo "URL: https://clawdbot-sthala.exe.xyz:9999/c/$conv_id" >&2
   
   # Poll until complete or timeout
   local elapsed=0
@@ -209,7 +224,8 @@ cmd_run() {
     
     if [[ "$status" == "false" ]]; then
       # Get result
-      cmd_result "$conv_id"
+      local result=$(cmd_result "$conv_id")
+      echo "$result"
       return 0
     fi
     

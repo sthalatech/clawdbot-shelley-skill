@@ -211,6 +211,35 @@ sqlite3 /home/exedev/.config/shelley/shelley.db \
   "SELECT conversation_id, slug, datetime(created_at, 'localtime') FROM conversations ORDER BY created_at DESC LIMIT 10;"
 ```
 
+## Responding to Clawdbot
+
+When Shelley is triggered by Clawdbot, include callback info in the prompt so Shelley can send results back:
+
+```bash
+# Include reply-to info in the prompt
+./shelley-cli run "Do the task. When done, reply via: clawdbot message send --provider telegram --to @user --message 'RESULT'" 
+```
+
+Or use the `--callback` option:
+
+```bash
+./shelley-cli run "Build the feature" --callback "clawdbot message send --provider whatsapp --to +1234567890"
+```
+
+Shelley should execute the callback command with the result when the task is complete.
+
+### Callback Format
+
+The callback is a shell command template. Shelley appends the result as `--message`:
+
+```bash
+# Clawdbot invokes:
+shelley-cli run "What is 2+2?" --callback "clawdbot message send --provider telegram --to @ks"
+
+# Shelley completes task, then runs:
+clawdbot message send --provider telegram --to @ks --message "4"
+```
+
 ## Notes
 
 - Shelley has access to all tools (bash, file editing, browser, etc.)
@@ -218,3 +247,4 @@ sqlite3 /home/exedev/.config/shelley/shelley.db \
 - The `cwd` parameter sets the working directory for the session
 - Each conversation is independent with its own context
 - Conversations auto-generate a slug based on content
+- When triggered by Clawdbot, always include callback info for response delivery
